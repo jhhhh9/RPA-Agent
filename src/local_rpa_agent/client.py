@@ -20,6 +20,30 @@ class SaaSClient:
     def heartbeat(self, token: str, version: str) -> dict[str, Any]:
         return self._request("POST", "/api/automation/agents/heartbeat", token=token, json={"agent_version": version})
 
+    def workflows(self, token: str) -> list[dict[str, Any]]:
+        data = self._request("GET", "/api/automation/agents/workflows", token=token)
+        return data.get("items", [])
+
+    def create_run(
+        self,
+        token: str,
+        workflow_id: str,
+        output_dir: str = "",
+        input_files: dict[str, Any] | None = None,
+        runtime_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/automation/agents/runs",
+            token=token,
+            json={
+                "workflow_id": workflow_id,
+                "output_dir": output_dir,
+                "input_files": input_files or {},
+                "runtime_params": runtime_params or {},
+            },
+        )
+
     def next_run(self, token: str) -> dict[str, Any] | None:
         data = self._request("GET", "/api/automation/agents/runs/next", token=token)
         return data.get("run")

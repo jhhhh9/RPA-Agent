@@ -11,6 +11,7 @@ dependencies = [
 
 [project.scripts]
 local-rpa-agent = "local_rpa_agent.main:app"
+local-rpa-agent-gui = "local_rpa_agent.gui:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

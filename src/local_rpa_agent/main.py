@@ -11,7 +11,7 @@ from rich.table import Table
 from .client import SaaSClient
 from .config import AgentConfig
 from .storage import AgentState, load_state, save_state
-from .workflow import WorkflowExecutor
+from .runner import execute_run as execute_agent_run
 
 app = typer.Typer(help="Local RPA Agent for AI Business SaaS")
 console = Console()
@@ -73,25 +73,7 @@ def load_runtime(base_url: str | None, config_path: str | None) -> tuple[AgentCo
 
 
 def execute_run(client: SaaSClient, token: str, run: dict[str, Any]) -> None:
-    run_id = run["id"]
-    console.print(f"[blue]Executing run[/] {run_id}")
-    client.update_run_status(token, run_id, "running")
-    try:
-        definition = run.get("workflow_snapshot") or {}
-        if isinstance(definition, str):
-            definition = json.loads(definition)
-        result = WorkflowExecutor().execute(definition, row={}, output_dir=run.get("output_dir") or "")
-        print_logs(result.logs)
-        if result.failed_rows:
-            message = result.logs[-1].message if result.logs else "workflow failed"
-            client.update_run_status(token, run_id, "failed", success_rows=result.success_rows, failed_rows=result.failed_rows, error_message=message)
-            console.print(f"[red]Run failed:[/] {message}")
-            return
-        client.update_run_status(token, run_id, "completed", success_rows=result.success_rows, failed_rows=result.failed_rows)
-        console.print(f"[green]Run completed:[/] {run_id}")
-    except Exception as exc:  # noqa: BLE001 - report failure to SaaS.
-        client.update_run_status(token, run_id, "failed", failed_rows=1, error_message=str(exc))
-        console.print(f"[red]Run failed:[/] {exc}")
+    execute_agent_run(client, token, run, log=lambda message: console.print(message))
 
 
 def print_logs(logs: list[Any]) -> None:

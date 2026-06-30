@@ -27,7 +27,7 @@
 3. 超级管理员在 SaaS 的“模块管理 -> automation 配置 -> 平台自动化配置”里发布 Agent 版本，填写版本号、平台和 GitHub Release 下载地址。
 4. 用户在 SaaS 的“本地 RPA 自动化”模块点击“下载本地 Agent”，下载安装即可。
 
-当前项目仍是 Agent 执行器骨架：已经打通绑定、心跳、拉任务、回写状态和 workflow 解释器；真正的鼠标键盘、截图识别、紫鸟浏览器窗口控制需要继续在 `src/local_rpa_agent/actions.py` 接入 pyautogui/OpenCV 或更稳定的系统自动化库。
+当前项目已经具备面向普通用户的基础 GUI：绑定设备、刷新可用工作流、选择输入文件/目录、选择输出目录、填写运行参数 JSON、创建并运行任务。真正的鼠标键盘、截图识别、紫鸟浏览器窗口控制仍需要继续在 `src/local_rpa_agent/actions.py` 接入 pyautogui/OpenCV 或更稳定的系统自动化库。
 
 ## 快速开始
 
@@ -37,13 +37,12 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
-# SaaS 页面生成绑定码后执行
+# 推荐：打开 GUI，普通用户在窗口里绑定、选择工作流并运行
+local-rpa-agent-gui
+
+# 命令行仍保留给调试使用
 local-rpa-agent bind ABCD1234 --base-url http://127.0.0.1:8080
-
-# 单次拉取并执行一个任务
 local-rpa-agent once
-
-# 常驻服务模式
 local-rpa-agent service --interval 5
 ```
 
@@ -57,6 +56,8 @@ Windows PowerShell 可把 `source .venv/bin/activate` 换成：
 
 - `POST /api/automation/agents/bind`：绑定码换取 agent token。
 - `POST /api/automation/agents/heartbeat`：心跳。
+- `GET /api/automation/agents/workflows`：本地 GUI 拉取当前公司可用工作流。
+- `POST /api/automation/agents/runs`：本地 GUI 创建并运行本机任务，携带输入文件、输入目录、输出目录和运行参数。
 - `GET /api/automation/agents/runs/next`：领取下一条任务。
 - `POST /api/automation/agents/runs/{id}/status`：回写任务状态。
 

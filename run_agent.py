@@ -1,5 +1,5 @@
-from local_rpa_agent.main import app
+from local_rpa_agent.gui import main
 
 
 if __name__ == "__main__":
-    app()
+    main()

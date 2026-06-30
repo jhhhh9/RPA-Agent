@@ -40,6 +40,6 @@ if (!(Test-Path $VenvPython)) {
 
 & $VenvPython -m pip install --upgrade pip
 & $VenvPython -m pip install -e . pyinstaller
-& $VenvPython -m PyInstaller --clean --onefile --name local-rpa-agent --paths src run_agent.py
+& $VenvPython -m PyInstaller --clean --onefile --windowed --name local-rpa-agent --paths src run_agent.py
 
 Write-Host "Built: dist\local-rpa-agent.exe"
