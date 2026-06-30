@@ -22,9 +22,9 @@
 
 普通用户不应该安装 Python，也不应该敲命令启动。正式交付流程是：
 
-1. 开发者在 Windows 构建机执行 `scripts\build-windows.ps1`，生成 `dist\local-rpa-agent.exe`。
-2. 将 exe 或安装包上传到 SaaS 配置的系统 OSS。
-3. 超级管理员在 SaaS 的“平台自动化工作流”页面发布 Agent 版本，填写 OSS object key、版本号和 hash。
+1. 开发者在 Windows 构建机执行 `powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1`，生成 `dist\local-rpa-agent.exe`。
+2. 在 GitHub 仓库创建 Release，例如 `v0.1.0`，把 `dist\local-rpa-agent.exe` 作为 release asset 上传。
+3. 超级管理员在 SaaS 的“模块管理 -> automation 配置 -> 平台自动化配置”里发布 Agent 版本，填写版本号、平台和 GitHub Release 下载地址。
 4. 用户在 SaaS 的“本地 RPA 自动化”模块点击“下载本地 Agent”，下载安装即可。
 
 当前项目仍是 Agent 执行器骨架：已经打通绑定、心跳、拉任务、回写状态和 workflow 解释器；真正的鼠标键盘、截图识别、紫鸟浏览器窗口控制需要继续在 `src/local_rpa_agent/actions.py` 接入 pyautogui/OpenCV 或更稳定的系统自动化库。
