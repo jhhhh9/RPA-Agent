@@ -35,10 +35,6 @@ class LocalActions:
         # pyautogui 本身没有稳定跨平台聚焦窗口 API；Windows 后续可接 pygetwindow。
         return ActionResult(True, f"focus_window requested: {title}")
 
-    def auto_cert_prepare_spu(self, params: dict[str, Any], row: dict[str, Any]) -> ActionResult:
-        spu = row.get("SPU ID") or "-"
-        return ActionResult(True, f"auto_cert prepared SPU {spu}")
-
     def click_image(self, params: dict[str, Any]) -> ActionResult:
         path = resolve_asset_path(params)
         threshold = float(params.get("threshold") or params.get("confidence") or 0.85)
@@ -116,6 +112,19 @@ class LocalActions:
         seconds = max(0.0, min(seconds, 120.0))
         time.sleep(seconds)
         return ActionResult(True, f"sleep {seconds}s")
+
+    def append_log(self, params: dict[str, Any]) -> ActionResult:
+        path = Path(str(params.get("path") or "")).expanduser()
+        if not str(path):
+            return ActionResult(False, "append_log missing path")
+        lines = normalize_paths(params.get("content"))
+        if not lines:
+            return ActionResult(True, "append_log skipped empty content")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            for line in lines:
+                fh.write(str(line) + "\n")
+        return ActionResult(True, f"append_log wrote {len(lines)} line(s)")
 
     def secure_confirm(self, params: dict[str, Any]) -> None:
         if not pyautogui:

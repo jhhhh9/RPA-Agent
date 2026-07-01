@@ -1,0 +1,314 @@
+from __future__ import annotations
+
+import csv
+import re
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+from .workflow import render_template
+
+CORE_RE = re.compile(r"(AB|AC|ER|R)\d+", re.IGNORECASE)
+
+
+def run_data_pipeline(definition: dict[str, Any], base_row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Run schema-defined local data preparation before UI automation nodes.
+
+    The SaaS workflow declares *what* data preparation is needed. The Agent only
+    executes whitelisted, generic steps; it does not import workflow-specific
+    Python scripts.
+    """
+    steps = definition.get("data_pipeline") or []
+    if not steps:
+        return [base_row]
+
+    context: dict[str, Any] = {**base_row}
+    last_rows: list[dict[str, Any]] | None = None
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        step_type = str(step.get("type") or "").strip()
+        params = render_params(step.get("params") or {}, context)
+        if step_type == "read_table":
+            rows = read_table(Path(str(params.get("path") or "")).expanduser())
+            context[str(params.get("output") or step.get("step_id") or "rows")] = rows
+            last_rows = rows
+        elif step_type == "group_rows":
+            rows = group_rows(dataset(context, params.get("source")), params)
+            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            last_rows = rows
+        elif step_type == "filter_completed":
+            rows = filter_completed(dataset(context, params.get("source")), params)
+            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            last_rows = rows
+        elif step_type == "derive_regex_list":
+            rows = derive_regex_list(dataset(context, params.get("source")), params)
+            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            last_rows = rows
+        elif step_type == "list_files":
+            files = list_files(params)
+            context[str(params.get("output") or step.get("step_id") or "files")] = files
+        elif step_type == "match_files":
+            rows = match_files(dataset(context, params.get("source")), fileset(context, params.get("files")), params)
+            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            last_rows = rows
+        elif step_type == "validate_required_fields":
+            rows = validate_required_fields(dataset(context, params.get("source")), params, context)
+            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            last_rows = rows
+        elif step_type == "set_field":
+            rows = set_field(dataset(context, params.get("source")), params)
+            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            last_rows = rows
+        else:
+            raise ValueError(f"unsupported data_pipeline step type: {step_type}")
+    return last_rows or []
+
+
+def render_params(value: Any, row: dict[str, Any]) -> Any:
+    if isinstance(value, dict):
+        return {key: render_params(item, row) for key, item in value.items()}
+    if isinstance(value, list):
+        return [render_params(item, row) for item in value]
+    return render_template(value, row, output_dir=str(row.get("output_dir") or ""))
+
+
+def read_table(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        raise FileNotFoundError(f"任务表不存在: {path}")
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        with path.open("r", encoding="utf-8-sig", newline="") as fh:
+            return [normalize_row(row) for row in csv.DictReader(fh)]
+    if suffix not in {".xlsx", ".xlsm", ".xltx", ".xltm", ".xls"}:
+        raise ValueError(f"不支持的任务表格式: {suffix}")
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
+    iterator = ws.iter_rows(values_only=True)
+    headers = [str(value or "").strip() for value in next(iterator, [])]
+    rows: list[dict[str, Any]] = []
+    for raw in iterator:
+        item = {headers[i]: raw[i] for i in range(min(len(headers), len(raw))) if headers[i]}
+        if any(str(value or "").strip() for value in item.values()):
+            rows.append(normalize_row(item))
+    return rows
+
+
+def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {str(key).strip(): value for key, value in row.items() if str(key).strip()}
+
+
+def group_rows(rows: list[dict[str, Any]], params: dict[str, Any]) -> list[dict[str, Any]]:
+    by = str(params.get("by") or "").strip()
+    if not by:
+        raise ValueError("group_rows requires by")
+    collect = params.get("collect")
+    collect_map = collect if isinstance(collect, dict) else {}
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        key = str(row.get(by) or "").strip()
+        if key:
+            groups[key].append(row)
+
+    out: list[dict[str, Any]] = []
+    for key, items in groups.items():
+        grouped: dict[str, Any] = {by: key, "rows": items}
+        for target, source in collect_map.items():
+            values: list[Any] = []
+            for item in items:
+                raw = item.get(str(source))
+                if raw is None or str(raw).strip() == "":
+                    continue
+                if raw not in values:
+                    values.append(raw)
+            grouped[str(target)] = values
+        out.append(grouped)
+    return out
+
+
+def filter_completed(rows: list[dict[str, Any]], params: dict[str, Any]) -> list[dict[str, Any]]:
+    values_field = str(params.get("values_field") or "").strip()
+    if not values_field:
+        return rows
+    done = read_line_set(Path(str(params.get("log_path") or "")).expanduser())
+    if not done:
+        return rows
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        values = normalize_values(row.get(values_field))
+        remaining = [value for value in values if str(value) not in done]
+        if not remaining:
+            continue
+        out.append({**row, values_field: remaining})
+    return out
+
+
+def derive_regex_list(rows: list[dict[str, Any]], params: dict[str, Any]) -> list[dict[str, Any]]:
+    source_field = str(params.get("source_field") or "").strip()
+    target_field = str(params.get("target_field") or "").strip()
+    pattern = str(params.get("pattern") or "").strip()
+    if not source_field or not target_field or not pattern:
+        raise ValueError("derive_regex_list requires source_field, target_field and pattern")
+    regex = re.compile(pattern, re.IGNORECASE)
+    unique = bool(params.get("unique", True))
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        values: list[str] = []
+        for raw in normalize_values(row.get(source_field)):
+            for match in regex.finditer(str(raw)):
+                value = match.group(0).upper()
+                if params.get("normalize_core"):
+                    value = value.replace("-", "")
+                if not unique or value not in values:
+                    values.append(value)
+        out.append({**row, target_field: values})
+    return out
+
+
+def list_files(params: dict[str, Any]) -> list[dict[str, Any]]:
+    root = Path(str(params.get("root") or "")).expanduser()
+    if not root.is_dir():
+        return []
+    iterator = root.rglob("*") if params.get("recursive") else root.iterdir()
+    out: list[dict[str, Any]] = []
+    for path in iterator:
+        if path.is_file():
+            resolved = path.resolve()
+            out.append({
+                "path": str(resolved),
+                "name": path.name,
+                "stem": path.stem,
+                "suffix": path.suffix.lower(),
+            })
+    return out
+
+
+def match_files(rows: list[dict[str, Any]], files: list[dict[str, Any]], params: dict[str, Any]) -> list[dict[str, Any]]:
+    values_field = str(params.get("values_field") or "").strip()
+    output_field = str(params.get("output_field") or "").strip()
+    mode = str(params.get("mode") or "name_contains_any").strip()
+    if not values_field or not output_field:
+        raise ValueError("match_files requires values_field and output_field")
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        values = [str(value).strip() for value in normalize_values(row.get(values_field)) if str(value).strip()]
+        matched: list[str] = []
+        for file in files:
+            if file_matches(file, values, mode):
+                path = str(file.get("path") or "")
+                if path and path not in matched:
+                    matched.append(path)
+        out.append({**row, output_field: matched})
+    return out
+
+
+def file_matches(file: dict[str, Any], values: list[str], mode: str) -> bool:
+    if not values:
+        return False
+    name = str(file.get("name") or "")
+    stem = str(file.get("stem") or "")
+    if mode == "core_stem_equals_any":
+        core = extract_core(stem)
+        return bool(core and core in {extract_core(value) or value.upper() for value in values})
+    if mode == "exact_token_any":
+        return any(exact_token_match(name, value) for value in values)
+    return any(value.lower() in name.lower() for value in values)
+
+
+def validate_required_fields(rows: list[dict[str, Any]], params: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:
+    required = [str(item) for item in normalize_values(params.get("required_fields"))]
+    optional = [str(item) for item in normalize_values(params.get("optional_fields"))]
+    log_path = Path(str(params.get("log_path") or "")).expanduser()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        missing_required = [field for field in required if is_empty(row.get(field))]
+        missing_optional = [field for field in optional if is_empty(row.get(field))]
+        if missing_required or missing_optional:
+            write_missing_log(log_path, row, missing_required, missing_optional, context)
+        if not missing_required:
+            out.append(row)
+    return out
+
+
+def set_field(rows: list[dict[str, Any]], params: dict[str, Any]) -> list[dict[str, Any]]:
+    field = str(params.get("field") or "").strip()
+    if not field:
+        raise ValueError("set_field requires field")
+    value = params.get("value")
+    return [{**row, field: value} for row in rows]
+
+
+def dataset(context: dict[str, Any], source: Any) -> list[dict[str, Any]]:
+    value = context.get(str(source or ""))
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def fileset(context: dict[str, Any], source: Any) -> list[dict[str, Any]]:
+    value = context.get(str(source or ""))
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def normalize_values(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple) or isinstance(value, set):
+        return list(value)
+    if isinstance(value, str) and ";" in value:
+        return [item.strip() for item in value.split(";") if item.strip()]
+    return [value]
+
+
+def is_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return str(value).strip() == ""
+
+
+def extract_core(value: Any) -> str:
+    raw = str(value or "").upper().replace("-", "")
+    match = CORE_RE.search(raw)
+    return match.group(0) if match else ""
+
+
+def exact_token_match(file_name: str, target: str) -> bool:
+    pattern = re.compile(r"(^|\s|-|_)" + re.escape(str(target)) + r"(\s|-|_|$|\.)", re.IGNORECASE)
+    return bool(pattern.search(file_name))
+
+
+def read_line_set(path: Path) -> set[str]:
+    if not str(path) or not path.exists():
+        return set()
+    return {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
+
+
+def write_missing_log(
+    path: Path,
+    row: dict[str, Any],
+    missing_required: list[str],
+    missing_optional: list[str],
+    context: dict[str, Any],
+) -> None:
+    if not str(path):
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    label = row.get("SPU ID") or row.get("id") or "-"
+    parts = [f"SPU:{label}"]
+    sku_list = row.get("sku_list")
+    if sku_list:
+        parts.append(f"SKU:{sku_list}")
+    if missing_required:
+        parts.append(f"缺失必填:{','.join(missing_required)}")
+    if missing_optional:
+        parts.append(f"缺失可选:{','.join(missing_optional)}")
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(" | ".join(parts) + "\n")

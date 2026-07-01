@@ -4,8 +4,8 @@ import json
 import time
 from typing import Any, Callable
 
-from .auto_cert import append_line, load_auto_cert_rows
 from .client import SaaSClient
+from .data_pipeline import run_data_pipeline
 from .workflow import WorkflowExecutor
 
 LogFn = Callable[[str], None]
@@ -49,8 +49,6 @@ def execute_run(client: SaaSClient, token: str, run: dict[str, Any], log: LogFn 
             failed += result.failed_rows
             if result.failed_rows:
                 last_error = result.logs[-1].message if result.logs else 'workflow failed'
-            else:
-                mark_auto_cert_done(row)
         status = 'failed' if failed and not success else 'completed'
         client.update_run_status(token, run_id, status, success_rows=success, failed_rows=failed, error_message=last_error)
         emit(f'任务结束：成功 {success}，失败 {failed}')
@@ -108,10 +106,7 @@ def parse_json_map(value: Any) -> dict[str, Any]:
 
 
 def execution_rows(definition: dict[str, Any], base_row: dict[str, Any]) -> list[dict[str, Any]]:
-    has_auto_cert = any(node.get('type') == 'auto_cert_prepare_spu' for node in definition.get('nodes', []))
-    if not has_auto_cert:
-        return [base_row]
-    prepared = load_auto_cert_rows(base_row)
+    prepared = run_data_pipeline(definition, base_row)
     rows: list[dict[str, Any]] = []
     for item in prepared:
         row = {**base_row, **item}
@@ -119,14 +114,3 @@ def execution_rows(definition: dict[str, Any], base_row: dict[str, Any]) -> list
         row['__runtime'] = base_row.get('__runtime', {})
         rows.append(row)
     return rows
-
-
-def mark_auto_cert_done(row: dict[str, Any]) -> None:
-    done_log = row.get('done_log')
-    complete_log = row.get('complete_spu_log')
-    sku_list = row.get('sku_list') or []
-    if done_log:
-        for sku in sku_list:
-            append_line(done_log, str(sku))
-    if complete_log and row.get('SPU ID'):
-        append_line(complete_log, str(row['SPU ID']))

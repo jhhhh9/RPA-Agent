@@ -79,8 +79,6 @@ class WorkflowExecutor:
             return ExecutionLog(node_id, node_type, True, message)
         if node_type == 'focus_window':
             action = self.actions.focus_window(rendered)
-        elif node_type == 'auto_cert_prepare_spu':
-            action = self.actions.auto_cert_prepare_spu(rendered, row)
         elif node_type == 'click_image':
             action = self.actions.click_image(rendered)
         elif node_type == 'click_coordinate':
@@ -95,6 +93,8 @@ class WorkflowExecutor:
             action = self.actions.scroll(float(rendered.get('amount', -220) or -220))
         elif node_type == 'sleep':
             action = self.actions.sleep(float(rendered.get('seconds', 1) or 1))
+        elif node_type == 'append_log':
+            action = self.actions.append_log(rendered)
         elif node_type == 'condition':
             action = self.actions.sleep(0)
         else:
