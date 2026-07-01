@@ -28,3 +28,8 @@ def save_state(path: Path, state: AgentState) -> None:
     except OSError:
         # Windows may not support POSIX chmod semantics; the token is still stored in the user profile path.
         pass
+
+
+def clear_state(path: Path) -> None:
+    if path.exists():
+        path.unlink()

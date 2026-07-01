@@ -13,9 +13,11 @@
 - 使用 SaaS 生成的绑定码绑定设备。
 - 定时心跳上报在线状态。
 - 轮询 `/api/automation/agents/runs/next` 拉取待执行任务。
-- 执行 workflow DAG 的基础解释器。
+- 执行 workflow DAG 的基础解释器，优先使用 `edges` 连线流向，兼容旧版 `next`。
+- 根据工作流 schema 动态渲染输入、参数、输出和按钮截图资产。
 - 回写任务 `running/completed/failed` 状态。
-- 对 `focus_window`、`click_image`、`type_text`、`select_option`、`upload_file` 等节点先输出结构化日志，占位后续接入 pyautogui/OpenCV。
+- 对 `focus_window`、`click_image`、`click_coordinate`、`type_text`、`select_option`、`upload_file`、`scroll` 等节点执行本地动作。
+- `auto_cert_prepare_spu` 预处理器可读取任务 Excel，按 SPU 分组，匹配标签图目录、外包装图和测试报告目录，然后逐组执行后续节点。
 
 
 ## 面向普通用户的交付方式
@@ -27,7 +29,7 @@
 3. 超级管理员在 SaaS 的“模块管理 -> automation 配置 -> 平台自动化配置”里发布 Agent 版本，填写版本号、平台和 GitHub Release 下载地址。
 4. 用户在 SaaS 的“本地 RPA 自动化”模块点击“下载本地 Agent”，下载安装即可。
 
-当前项目已经具备面向普通用户的基础 GUI：绑定设备、刷新可用工作流、选择输入文件/目录、选择输出目录、填写运行参数 JSON、创建并运行任务。真正的鼠标键盘、截图识别、紫鸟浏览器窗口控制仍需要继续在 `src/local_rpa_agent/actions.py` 接入 pyautogui/OpenCV 或更稳定的系统自动化库。
+当前项目已经具备面向普通用户的基础 GUI：绑定设备、刷新可用工作流，并根据 SaaS workflow 的 `input_schema/runtime_schema/output_schema/assets` 动态生成运行表单。绑定后本机不允许重复填写绑定码；如需更换绑定，可先清除本机 token。动作适配层已接入基础 pyautogui/OpenCV 能力，用于图片点击、坐标点击、输入、上传文件和滚动。
 
 ## 快速开始
 
@@ -65,10 +67,13 @@ Windows PowerShell 可把 `source .venv/bin/activate` 换成：
 
 主要扩展文件是 `src/local_rpa_agent/actions.py`：
 
-- `focus_window`：按窗口标题激活紫鸟浏览器或目标软件。
-- `click_image`：用 OpenCV 模板匹配用户上传的按钮截图。
+- `focus_window`：按窗口标题请求聚焦紫鸟浏览器或目标软件。
+- `click_image`：用 OpenCV/pyautogui 模板匹配按钮截图。
+- `click_coordinate`：点击固定坐标。
 - `type_text`：向当前焦点输入文本。
-- `upload_file`：在系统文件选择框中填入本地文件路径。
+- `upload_file`：在系统文件选择框中填入本地文件路径，支持多文件。
 - `select_option`：操作下拉框。
+- `scroll`：滚动页面。
+- `auto_cert_prepare_spu`：承接 autoCert.py 的 Excel 分组和本地资源匹配逻辑。
 
-这些能力需要本机 GUI 权限，建议后续打包成 Electron/Wails 桌面应用时统一申请权限和展示运行日志。
+这些能力需要本机 GUI 权限。后续若升级成 Electron/Wails 桌面应用，可复用现有 SaaS 协议和 workflow schema，只替换本地 UI 壳。

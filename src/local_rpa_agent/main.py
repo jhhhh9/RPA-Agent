@@ -22,7 +22,7 @@ def bind(code: str, base_url: str | None = None, config_path: str | None = None)
     """Bind this device with a one-time code generated in SaaS."""
     cfg = AgentConfig.load(base_url=base_url, config_path=config_path)
     client = SaaSClient(cfg.base_url)
-    data = client.bind(code, cfg.device_name, cfg.os_type, cfg.version)
+    data = client.bind(code, cfg.device_name, cfg.os_type, cfg.version, cfg.device_fingerprint)
     agent = data["agent"]
     token = data["token"]
     save_state(cfg.config_path, AgentState(agent_id=agent["id"], tenant_id=agent["tenant_id"], user_id=agent["user_id"], token=token))

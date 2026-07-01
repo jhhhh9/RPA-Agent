@@ -10,11 +10,17 @@ class SaaSClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def bind(self, code: str, device_name: str, os_type: str, version: str) -> dict[str, Any]:
+    def bind(self, code: str, device_name: str, os_type: str, version: str, device_fingerprint: str) -> dict[str, Any]:
         return self._request(
             "POST",
             "/api/automation/agents/bind",
-            json={"code": code, "device_name": device_name, "os_type": os_type, "agent_version": version},
+            json={
+                "code": code,
+                "device_name": device_name,
+                "os_type": os_type,
+                "agent_version": version,
+                "device_fingerprint": device_fingerprint,
+            },
         )
 
     def heartbeat(self, token: str, version: str) -> dict[str, Any]:
