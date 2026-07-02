@@ -12,58 +12,134 @@ CORE_RE = re.compile(r"(AB|AC|ER|R)\d+", re.IGNORECASE)
 
 
 def run_data_pipeline(definition: dict[str, Any], base_row: dict[str, Any]) -> list[dict[str, Any]]:
-    """Run schema-defined local data preparation before UI automation nodes.
+    rows, _trace = run_data_pipeline_with_trace(definition, base_row)
+    return rows
 
-    The SaaS workflow declares *what* data preparation is needed. The Agent only
-    executes whitelisted, generic steps; it does not import workflow-specific
-    Python scripts.
-    """
+
+def run_data_pipeline_with_trace(definition: dict[str, Any], base_row: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run local data preparation and return execution rows plus per-step trace."""
     steps = definition.get("data_pipeline") or []
     if not steps:
-        return [base_row]
+        return [base_row], []
 
     context: dict[str, Any] = {**base_row}
     last_rows: list[dict[str, Any]] | None = None
+    trace: list[dict[str, Any]] = []
     for step in steps:
         if not isinstance(step, dict):
             continue
         step_type = str(step.get("type") or "").strip()
+        step_id = str(step.get("step_id") or step_type or "step").strip()
         params = render_params(step.get("params") or {}, context)
+        input_count = pipeline_input_count(step_type, params, context)
+        output_name = ""
+        output_value: Any = None
         if step_type == "read_table":
             rows = read_table(Path(str(params.get("path") or "")).expanduser())
-            context[str(params.get("output") or step.get("step_id") or "rows")] = rows
+            output_name = str(params.get("output") or step.get("step_id") or "rows")
+            context[output_name] = rows
+            output_value = rows
             last_rows = rows
         elif step_type == "group_rows":
             rows = group_rows(dataset(context, params.get("source")), params)
-            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            output_name = str(params.get("output") or params.get("source") or "rows")
+            context[output_name] = rows
+            output_value = rows
             last_rows = rows
         elif step_type == "filter_completed":
             rows = filter_completed(dataset(context, params.get("source")), params)
-            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            output_name = str(params.get("output") or params.get("source") or "rows")
+            context[output_name] = rows
+            output_value = rows
             last_rows = rows
         elif step_type == "derive_regex_list":
             rows = derive_regex_list(dataset(context, params.get("source")), params)
-            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            output_name = str(params.get("output") or params.get("source") or "rows")
+            context[output_name] = rows
+            output_value = rows
             last_rows = rows
         elif step_type == "list_files":
             files = list_files(params)
-            context[str(params.get("output") or step.get("step_id") or "files")] = files
+            output_name = str(params.get("output") or step.get("step_id") or "files")
+            context[output_name] = files
+            output_value = files
         elif step_type == "match_files":
             rows = match_files(dataset(context, params.get("source")), fileset(context, params.get("files")), params)
-            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            output_name = str(params.get("output") or params.get("source") or "rows")
+            context[output_name] = rows
+            output_value = rows
             last_rows = rows
         elif step_type == "validate_required_fields":
             rows = validate_required_fields(dataset(context, params.get("source")), params, context)
-            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            output_name = str(params.get("output") or params.get("source") or "rows")
+            context[output_name] = rows
+            output_value = rows
             last_rows = rows
         elif step_type == "set_field":
             rows = set_field(dataset(context, params.get("source")), params)
-            context[str(params.get("output") or params.get("source") or "rows")] = rows
+            output_name = str(params.get("output") or params.get("source") or "rows")
+            context[output_name] = rows
+            output_value = rows
             last_rows = rows
         else:
             raise ValueError(f"unsupported data_pipeline step type: {step_type}")
-    return last_rows or []
+        trace.append(pipeline_trace_step(step_id, step_type, params, input_count, output_name, output_value))
+    return last_rows or [], trace
 
+
+
+def pipeline_input_count(step_type: str, params: dict[str, Any], context: dict[str, Any]) -> int:
+    if step_type == "read_table":
+        return 1 if str(params.get("path") or "").strip() else 0
+    if step_type == "list_files":
+        root = Path(str(params.get("root") or "")).expanduser()
+        return 1 if root.exists() else 0
+    if step_type == "match_files":
+        return len(dataset(context, params.get("source")))
+    if step_type in {"group_rows", "filter_completed", "derive_regex_list", "validate_required_fields", "set_field"}:
+        return len(dataset(context, params.get("source")))
+    return 0
+
+
+def pipeline_trace_step(
+    step_id: str,
+    step_type: str,
+    params: dict[str, Any],
+    input_count: int,
+    output_name: str,
+    output_value: Any,
+) -> dict[str, Any]:
+    trace: dict[str, Any] = {
+        "step_id": step_id,
+        "type": step_type,
+        "input_count": input_count,
+        "output_count": value_count(output_value),
+        "output": output_name,
+        "sample": sample_value(output_value),
+    }
+    if step_type == "match_files":
+        trace["match_mode"] = str(params.get("mode") or "name_contains_any")
+        trace["values_field"] = str(params.get("values_field") or "")
+        trace["output_field"] = str(params.get("output_field") or "")
+    if step_type == "list_files":
+        trace["root"] = str(params.get("root") or "")
+    return trace
+
+
+def value_count(value: Any) -> int:
+    if isinstance(value, list):
+        return len(value)
+    if value is None:
+        return 0
+    return 1
+
+
+def sample_value(value: Any, limit: int = 5) -> list[Any]:
+    if isinstance(value, list):
+        return value[:limit]
+    if value is None:
+        return []
+    return [value]
 
 def render_params(value: Any, row: dict[str, Any]) -> Any:
     if isinstance(value, dict):

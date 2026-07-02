@@ -71,8 +71,15 @@ class LocalActions:
         return ActionResult(True, f"clicked coordinate {x},{y}")
 
     def type_text(self, params: dict[str, Any], text: str) -> ActionResult:
+        mode = str(params.get("input_mode") or params.get("mode") or "replace").strip()
         if not pyautogui:
-            return ActionResult(True, f"type_text placeholder: {text}")
+            return ActionResult(True, f"type_text placeholder: mode={mode}, text={text}")
+        if mode in {"replace", "clear_only"}:
+            pyautogui.hotkey("ctrl", "a")
+            pyautogui.press("backspace")
+            time.sleep(float(params.get("clear_sleep") or 0.1))
+        if mode == "clear_only":
+            return ActionResult(True, "cleared text input")
         paste_text(text)
         return ActionResult(True, f"typed text: {text}")
 

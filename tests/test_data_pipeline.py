@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from local_rpa_agent.data_pipeline import run_data_pipeline
+from local_rpa_agent.data_pipeline import run_data_pipeline, run_data_pipeline_with_trace
 
 
 class DataPipelineTest(unittest.TestCase):
@@ -105,6 +105,22 @@ class DataPipelineTest(unittest.TestCase):
             self.assertEqual(row["label_paths"], [str((label_dir / "AC0194-label.png").resolve())])
             self.assertEqual(len(row["report_paths"]), 2)
             self.assertIn("SPU002", (output_dir / "miss_resource.txt").read_text(encoding="utf-8"))
+
+    def test_trace_records_each_pipeline_step_count_and_sample(self):
+        definition = {
+            "data_pipeline": [
+                {"step_id": "set_name", "type": "set_field", "params": {"source": "rows", "field": "name", "value": "demo", "output": "rows"}},
+                {"step_id": "validate", "type": "validate_required_fields", "params": {"source": "rows", "required_fields": ["name"], "output": "rows"}},
+            ]
+        }
+
+        rows, trace = run_data_pipeline_with_trace(definition, {"rows": [{"id": 1}]})
+
+        self.assertEqual(rows[0]["name"], "demo")
+        self.assertEqual([item["step_id"] for item in trace], ["set_name", "validate"])
+        self.assertEqual(trace[0]["input_count"], 1)
+        self.assertEqual(trace[0]["output_count"], 1)
+        self.assertEqual(trace[0]["sample"][0]["name"], "demo")
 
 
 if __name__ == "__main__":

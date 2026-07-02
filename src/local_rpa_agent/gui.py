@@ -322,8 +322,16 @@ class AgentApp:
             if not result.get('ok'):
                 raise ValueError(str(result.get('error') or '预检失败'))
             self.log(f"预检通过：数据管道生成 {result.get('total', 0)} 组执行数据")
+            for step in result.get('trace') or []:
+                self.log(
+                    f"数据步骤 {step.get('step_id')}: "
+                    f"输入 {step.get('input_count')}，输出 {step.get('output_count')}，写入 {step.get('output') or '-'}"
+                )
+                sample = step.get('sample') or []
+                if sample:
+                    self.log(f"  样例：{json.dumps(sample[:2], ensure_ascii=False)[:800]}")
             for index, item in enumerate(result.get('sample') or [], start=1):
-                self.log(f"预检样例 {index}: {json.dumps(item, ensure_ascii=False)[:800]}")
+                self.log(f"最终执行样例 {index}: {json.dumps(item, ensure_ascii=False)[:800]}")
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror('预检失败', str(exc))
 

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from .capabilities import LOCAL_CAPABILITIES, capability_labels, missing_capabilities
-from .data_pipeline import run_data_pipeline
+from .data_pipeline import run_data_pipeline_with_trace
 from .workflow import WorkflowExecutor
 
 if TYPE_CHECKING:
@@ -38,7 +39,11 @@ def execute_run(client: "SaaSClient", token: str, run: dict[str, Any], log: LogF
             emit(message)
             return
         base_row = runtime_row(run)
-        rows = execution_rows(definition, base_row)
+        rows, pipeline_trace = execution_rows_with_trace(definition, base_row)
+        if pipeline_trace:
+            trace_path = write_pipeline_trace(base_row, pipeline_trace)
+            if trace_path:
+                emit(f"数据管道明细已写入：{trace_path}")
         if not rows:
             rows = [base_row]
         for index, row in enumerate(rows, start=1):
@@ -115,14 +120,29 @@ def parse_json_map(value: Any) -> dict[str, Any]:
 
 
 def execution_rows(definition: dict[str, Any], base_row: dict[str, Any]) -> list[dict[str, Any]]:
-    prepared = run_data_pipeline(definition, base_row)
+    rows, _trace = execution_rows_with_trace(definition, base_row)
+    return rows
+
+
+def execution_rows_with_trace(definition: dict[str, Any], base_row: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    prepared, trace = run_data_pipeline_with_trace(definition, base_row)
     rows: list[dict[str, Any]] = []
     for item in prepared:
         row = {**base_row, **item}
         row['__input'] = base_row.get('__input', {})
         row['__runtime'] = base_row.get('__runtime', {})
         rows.append(row)
-    return rows
+    return rows, trace
+
+
+def write_pipeline_trace(base_row: dict[str, Any], trace: list[dict[str, Any]]) -> str:
+    output_dir = str(base_row.get('output_dir') or '').strip()
+    if not output_dir:
+        return ''
+    path = Path(output_dir).expanduser() / 'pipeline_trace.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(trace, ensure_ascii=False, indent=2), encoding='utf-8')
+    return str(path)
 
 
 def preview_data_pipeline(definition: dict[str, Any], base_row: dict[str, Any], sample_limit: int = 5) -> dict[str, Any]:
@@ -130,5 +150,5 @@ def preview_data_pipeline(definition: dict[str, Any], base_row: dict[str, Any], 
     missing = missing_capabilities(definition.get('required_capabilities') or [], LOCAL_CAPABILITIES)
     if missing:
         return {"ok": False, "error": "本地 Agent 缺少工作流能力：" + "、".join(capability_labels(missing)), "total": 0, "sample": []}
-    rows = execution_rows(definition, base_row)
-    return {"ok": True, "total": len(rows), "sample": rows[:max(0, sample_limit)]}
+    rows, trace = execution_rows_with_trace(definition, base_row)
+    return {"ok": True, "total": len(rows), "sample": rows[:max(0, sample_limit)], "trace": trace}
