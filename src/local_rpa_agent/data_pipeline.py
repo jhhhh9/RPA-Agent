@@ -58,6 +58,12 @@ def run_data_pipeline_with_trace(definition: dict[str, Any], base_row: dict[str,
             context[output_name] = rows
             output_value = rows
             last_rows = rows
+        elif step_type == "derive_sku_candidates":
+            rows = derive_sku_candidates(dataset(context, params.get("source")), params)
+            output_name = str(params.get("output") or params.get("source") or "rows")
+            context[output_name] = rows
+            output_value = rows
+            last_rows = rows
         elif step_type == "list_files":
             files = list_files(params)
             output_name = str(params.get("output") or step.get("step_id") or "files")
@@ -108,7 +114,7 @@ def pipeline_input_count(step_type: str, params: dict[str, Any], context: dict[s
         return len(fileset(context, params.get("files")))
     if step_type == "match_files":
         return len(dataset(context, params.get("source")))
-    if step_type in {"group_rows", "filter_completed", "derive_regex_list", "validate_required_fields", "set_field"}:
+    if step_type in {"group_rows", "filter_completed", "derive_regex_list", "derive_sku_candidates", "validate_required_fields", "set_field"}:
         return len(dataset(context, params.get("source")))
     return 0
 
@@ -266,6 +272,55 @@ def derive_regex_list(rows: list[dict[str, Any]], params: dict[str, Any]) -> lis
     return out
 
 
+def derive_sku_candidates(rows: list[dict[str, Any]], params: dict[str, Any]) -> list[dict[str, Any]]:
+    source_field = str(params.get("source_field") or "").strip()
+    target_field = str(params.get("target_field") or "").strip()
+    if not source_field or not target_field:
+        raise ValueError("derive_sku_candidates requires source_field and target_field")
+    formats = [str(item) for item in normalize_values(params.get("formats")) if str(item).strip()]
+    if not formats:
+        formats = ["compact_full", "dash_full"]
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        candidates: list[str] = []
+        for raw in normalize_values(row.get(source_field)):
+            for value in sku_candidates(str(raw), formats):
+                if value and value not in candidates:
+                    candidates.append(value)
+        out.append({**row, target_field: candidates})
+    return out
+
+
+def sku_candidates(value: str, formats: list[str]) -> list[str]:
+    full = str(value or "").strip().upper()
+    if not full:
+        return []
+    match = re.match(r"^([A-Z]+)-?(\d+)(.*)$", full)
+    if not match:
+        return [full]
+    prefix, number, suffix = match.groups()
+    suffix = suffix.lstrip("-")
+    compact_suffix = f"-{suffix}" if suffix else ""
+    dash_suffix = f"-{suffix}" if suffix else ""
+    compact_core = f"{prefix}{number}"
+    dash_core = f"{prefix}-{number}"
+    compact_full = f"{compact_core}{compact_suffix}"
+    dash_full = f"{dash_core}{dash_suffix}"
+    mapping = {
+        "raw": full,
+        "compact_full": compact_full,
+        "dash_full": dash_full,
+        "compact_core": compact_core,
+        "dash_core": dash_core,
+    }
+    out: list[str] = []
+    for fmt in formats:
+        item = mapping.get(fmt)
+        if item and item not in out:
+            out.append(item)
+    return out
+
+
 def list_files(params: dict[str, Any]) -> list[dict[str, Any]]:
     root = Path(str(params.get("root") or "")).expanduser()
     if not root.is_dir():
@@ -361,14 +416,23 @@ def validate_required_fields(rows: list[dict[str, Any]], params: dict[str, Any],
     required = [str(item) for item in normalize_values(params.get("required_fields"))]
     optional = [str(item) for item in normalize_values(params.get("optional_fields"))]
     log_path = Path(str(params.get("log_path") or "")).expanduser()
+    prepare_missing_log(log_path, params)
     out: list[dict[str, Any]] = []
-    for row in rows:
-        missing_required = [field for field in required if is_empty(row.get(field))]
-        missing_optional = [field for field in optional if is_empty(row.get(field))]
-        if missing_required or missing_optional:
-            write_missing_log(log_path, row, missing_required, missing_optional, context)
-        if not missing_required:
-            out.append(row)
+    old_params = context.get("__validate_params")
+    context["__validate_params"] = params
+    try:
+        for row in rows:
+            missing_required = [field for field in required if is_empty(row.get(field))]
+            missing_optional = [field for field in optional if is_empty(row.get(field))]
+            if missing_required or missing_optional:
+                write_missing_log(log_path, row, missing_required, missing_optional, context)
+            if not missing_required:
+                out.append(row)
+    finally:
+        if old_params is None:
+            context.pop("__validate_params", None)
+        else:
+            context["__validate_params"] = old_params
     return out
 
 
@@ -441,14 +505,65 @@ def write_missing_log(
     if not str(path):
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    label = row.get("SPU ID") or row.get("id") or "-"
-    parts = [f"SPU:{label}"]
-    sku_list = row.get("sku_list")
-    if sku_list:
-        parts.append(f"SKU:{sku_list}")
-    if missing_required:
-        parts.append(f"缺失必填:{','.join(missing_required)}")
-    if missing_optional:
-        parts.append(f"缺失可选:{','.join(missing_optional)}")
+    params = context.get("__validate_params")
+    template = ""
+    labels: dict[str, str] = {}
+    if isinstance(params, dict):
+        template = str(params.get("format") or "")
+        raw_labels = params.get("field_labels")
+        if isinstance(raw_labels, dict):
+            labels = {str(key): str(value) for key, value in raw_labels.items()}
+    if template:
+        line = render_missing_template(template, row, missing_required, missing_optional, labels)
+    else:
+        label = row.get("SPU ID") or row.get("id") or "-"
+        parts = [f"SPU:{label}"]
+        sku_list = row.get("sku_list")
+        if sku_list:
+            parts.append(f"SKU:{format_value(sku_list)}")
+        if missing_required:
+            parts.append(f"缺失必填:{','.join(label_fields(missing_required, labels))}")
+        if missing_optional:
+            parts.append(f"缺失可选:{','.join(label_fields(missing_optional, labels))}")
+        line = " | ".join(parts)
     with path.open("a", encoding="utf-8") as fh:
-        fh.write(" | ".join(parts) + "\n")
+        fh.write(line + "\n")
+
+
+def prepare_missing_log(path: Path, params: dict[str, Any]) -> None:
+    if not str(path):
+        return
+    if str(params.get("write_mode") or "append").strip() != "overwrite":
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+
+
+def render_missing_template(
+    template: str,
+    row: dict[str, Any],
+    missing_required: list[str],
+    missing_optional: list[str],
+    labels: dict[str, str],
+) -> str:
+    values = {
+        **{str(key): format_value(value) for key, value in row.items()},
+        "missing_required": ",".join(missing_required),
+        "missing_optional": ",".join(missing_optional),
+        "missing_required_labels": ",".join(label_fields(missing_required, labels)),
+        "missing_optional_labels": ",".join(label_fields(missing_optional, labels)),
+    }
+    out = template
+    for key, value in values.items():
+        out = out.replace("{" + key + "}", value)
+    return out
+
+
+def label_fields(fields: list[str], labels: dict[str, str]) -> list[str]:
+    return [labels.get(field, field) for field in fields]
+
+
+def format_value(value: Any) -> str:
+    if isinstance(value, list):
+        return ",".join(str(item) for item in value)
+    return str(value)

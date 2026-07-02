@@ -239,6 +239,85 @@ class DataPipelineTest(unittest.TestCase):
 
         self.assertEqual(rows[0]["report_paths"], ["/tmp/right.pdf"])
 
+    def test_sku_candidates_match_dash_and_compact_report_names(self):
+        definition = {
+            "data_pipeline": [
+                {
+                    "step_id": "report_candidates",
+                    "type": "derive_sku_candidates",
+                    "params": {
+                        "source": "rows",
+                        "source_field": "sku_list",
+                        "target_field": "report_sku_candidates",
+                        "formats": ["compact_full", "dash_full", "compact_core", "dash_core"],
+                        "output": "rows",
+                    },
+                },
+                {
+                    "step_id": "match_reports",
+                    "type": "match_files",
+                    "params": {
+                        "source": "rows",
+                        "files": "files",
+                        "values_field": "report_sku_candidates",
+                        "output_field": "report_paths",
+                        "mode": "regex_any",
+                        "pattern": "(^|[^A-Za-z0-9]){{value}}([^A-Za-z0-9]|$)",
+                        "target": "name",
+                        "output": "rows",
+                    },
+                },
+            ]
+        }
+        base_row = {
+            "rows": [{"SPU ID": "SPU001", "sku_list": ["R0052-G", "R0052-S"]}],
+            "files": [
+                {"name": "铅镉镍R-0052-G SL-0015.pdf", "path": "/tmp/gold.pdf"},
+                {"name": "铅镉镍R-0052-S SL-0007.pdf", "path": "/tmp/silver.pdf"},
+            ],
+        }
+
+        rows = run_data_pipeline(definition, base_row)
+
+        self.assertIn("R-0052-G", rows[0]["report_sku_candidates"])
+        self.assertIn("R0052-G", rows[0]["report_sku_candidates"])
+        self.assertIn("R-0052", rows[0]["report_sku_candidates"])
+        self.assertEqual(rows[0]["report_paths"], ["/tmp/gold.pdf", "/tmp/silver.pdf"])
+
+    def test_validate_required_fields_overwrites_log_and_uses_format_template(self):
+        with TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "miss_resource.txt"
+            log_path.write_text("old log\n", encoding="utf-8")
+            definition = {
+                "data_pipeline": [
+                    {
+                        "step_id": "validate",
+                        "type": "validate_required_fields",
+                        "params": {
+                            "source": "rows",
+                            "required_fields": ["label_paths", "report_paths"],
+                            "log_path": str(log_path),
+                            "write_mode": "overwrite",
+                            "format": "SPU:{SPU ID} | SKU:{sku_list} | 缺失:{missing_required_labels}",
+                            "field_labels": {"label_paths": "标签图", "report_paths": "测试报告"},
+                            "output": "rows",
+                        },
+                    },
+                ],
+            }
+
+            rows = run_data_pipeline(definition, {
+                "rows": [
+                    {"SPU ID": "SPU001", "sku_list": ["R0052-G"], "label_paths": [], "report_paths": []},
+                    {"SPU ID": "SPU002", "sku_list": ["R0053-G"], "label_paths": ["/tmp/a.jpg"], "report_paths": ["/tmp/a.pdf"]},
+                ],
+            })
+
+            self.assertEqual(len(rows), 1)
+            content = log_path.read_text(encoding="utf-8")
+            self.assertNotIn("old log", content)
+            self.assertIn("SPU:SPU001 | SKU:R0052-G | 缺失:标签图,测试报告", content)
+
     def test_find_file_discovers_optional_package_image_from_label_directory(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

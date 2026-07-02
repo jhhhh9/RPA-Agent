@@ -70,6 +70,31 @@ class ActionTest(unittest.TestCase):
             actions.pyautogui = old_pyautogui
             actions.pyperclip = old_pyperclip
 
+    def test_upload_file_one_by_one_uploads_each_path_separately(self):
+        fake = FakePyAutoGUI()
+        old_pyautogui = actions.pyautogui
+        old_pyperclip = actions.pyperclip
+        try:
+            actions.pyautogui = fake
+            actions.pyperclip = None
+
+            result = LocalActions().upload_file(
+                {'allow_missing': True, 'upload_mode': 'one_by_one'},
+                ['C:\\tmp\\a.pdf', 'C:\\tmp\\b.pdf'],
+            )
+
+            self.assertTrue(result.ok)
+            self.assertEqual(fake.calls, [
+                ('write', '"C:\\tmp\\a.pdf"'),
+                ('press', 'enter'),
+                ('write', '"C:\\tmp\\b.pdf"'),
+                ('press', 'enter'),
+            ])
+            self.assertIn('uploaded 2 file(s)', result.message)
+        finally:
+            actions.pyautogui = old_pyautogui
+            actions.pyperclip = old_pyperclip
+
     def test_optional_click_skips_when_coordinate_is_empty(self):
         fake = FakePyAutoGUI()
         old_pyautogui = actions.pyautogui

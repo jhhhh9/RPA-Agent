@@ -101,11 +101,19 @@ class LocalActions:
             return ActionResult(False, "文件不存在: " + ", ".join(missing[:3]))
         if not pyautogui:
             return ActionResult(True, f"upload_file placeholder: {paths}")
-        multi = " ".join([f'"{item}"' for item in paths])
-        paste_text(multi)
-        pyautogui.press("enter")
-        time.sleep(float(params.get("after_sleep") or 1.8))
-        self.secure_confirm(params)
+        upload_mode = str(params.get("upload_mode") or "multi_select").strip()
+        if upload_mode == "one_by_one":
+            for item in paths:
+                paste_text(f'"{item}"')
+                pyautogui.press("enter")
+                time.sleep(float(params.get("after_sleep") or 1.8))
+                self.secure_confirm(params)
+        else:
+            multi = " ".join([f'"{item}"' for item in paths])
+            paste_text(multi)
+            pyautogui.press("enter")
+            time.sleep(float(params.get("after_sleep") or 1.8))
+            self.secure_confirm(params)
         return ActionResult(True, f"uploaded {len(paths)} file(s)")
 
     def optional_click(self, params: dict[str, Any]) -> ActionResult:
