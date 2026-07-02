@@ -89,6 +89,8 @@ class WorkflowExecutor:
             action = self.actions.select_option(rendered, str(rendered.get('value', '')))
         elif node_type == 'upload_file':
             action = self.actions.upload_file(rendered, rendered.get('path', ''))
+        elif node_type == 'optional_click':
+            action = self.actions.optional_click(rendered)
         elif node_type == 'scroll':
             action = self.actions.scroll(float(rendered.get('amount', -220) or -220))
         elif node_type == 'sleep':

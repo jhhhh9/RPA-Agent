@@ -108,6 +108,28 @@ class LocalActions:
         self.secure_confirm(params)
         return ActionResult(True, f"uploaded {len(paths)} file(s)")
 
+    def optional_click(self, params: dict[str, Any]) -> ActionResult:
+        strategy = str(params.get("strategy") or "coordinate_click_twice").strip()
+        if strategy != "coordinate_click_twice":
+            return ActionResult(False, f"unsupported optional_click strategy: {strategy}")
+        if "guard_value" in params and is_blank(params.get("guard_value")):
+            return ActionResult(True, "optional_click skipped empty guard_value")
+        x = int(float(params.get("x") or params.get("secure_confirm_x") or 0))
+        y = int(float(params.get("y") or params.get("secure_confirm_y") or 0))
+        if not x or not y:
+            return ActionResult(True, "optional_click skipped empty coordinate")
+        if not pyautogui:
+            return ActionResult(True, f"optional_click placeholder: {x},{y}")
+        clicks = max(1, int(float(params.get("clicks") or 2)))
+        interval = max(0.0, float(params.get("interval") or 0.4))
+        before_sleep = max(0.0, float(params.get("before_sleep") or 0.4))
+        time.sleep(before_sleep)
+        for index in range(clicks):
+            pyautogui.click(x, y, duration=0.12)
+            if index < clicks - 1:
+                time.sleep(interval)
+        return ActionResult(True, f"optional_click coordinate {x},{y} x{clicks}")
+
     def scroll(self, amount: float) -> ActionResult:
         if not pyautogui:
             return ActionResult(True, f"scroll placeholder: {amount}")
@@ -162,13 +184,32 @@ def normalize_paths(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, list):
-        return [str(item) for item in value if str(item).strip()]
+        return [normalize_path_text(str(item)) for item in value if str(item).strip()]
     text = str(value).strip()
     if not text:
         return []
     if ";" in text:
-        return [item.strip().strip('"') for item in text.split(";") if item.strip()]
-    return [text.strip('"')]
+        return [normalize_path_text(item.strip().strip('"')) for item in text.split(";") if item.strip()]
+    return [normalize_path_text(text.strip('"'))]
+
+
+def normalize_path_text(value: str) -> str:
+    text = value.strip().strip('"')
+    if re_drive_path(text):
+        return text.replace("/", "\\")
+    return text
+
+
+def re_drive_path(value: str) -> bool:
+    return len(value) >= 3 and value[1] == ":" and value[0].isalpha()
+
+
+def is_blank(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return str(value).strip() == ""
 
 
 def paste_text(text: str) -> None:

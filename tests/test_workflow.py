@@ -64,6 +64,32 @@ class WorkflowExecutorTest(unittest.TestCase):
         self.assertEqual(result.success_rows, 1)
         self.assertEqual([item.node_id for item in result.logs], ["entry", "upload"])
 
+    def test_executor_supports_optional_click_node(self):
+        class FakeActions:
+            def optional_click(self, params):
+                self.params = params
+                from local_rpa_agent.actions import ActionResult
+
+                return ActionResult(True, "optional click ok")
+
+        actions = FakeActions()
+        definition = {
+            "entry_node": "security_confirm",
+            "nodes": [
+                {
+                    "node_id": "security_confirm",
+                    "type": "optional_click",
+                    "params": {"strategy": "coordinate_click_twice", "x": "{{runtime.x}}", "y": "{{runtime.y}}"},
+                },
+            ],
+        }
+
+        result = WorkflowExecutor(actions=actions).execute(definition, row={"__runtime": {"x": 1057, "y": 610}})
+
+        self.assertEqual(result.success_rows, 1)
+        self.assertEqual(actions.params["x"], 1057)
+        self.assertEqual(actions.params["y"], 610)
+
 
 if __name__ == "__main__":
     unittest.main()

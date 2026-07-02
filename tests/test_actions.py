@@ -17,6 +17,9 @@ class FakePyAutoGUI:
     def write(self, text):
         self.calls.append(('write', text))
 
+    def click(self, x, y, duration=0):
+        self.calls.append(('click', x, y, duration))
+
 
 class ActionTest(unittest.TestCase):
     def test_type_text_replace_clears_current_input_before_typing(self):
@@ -66,6 +69,52 @@ class ActionTest(unittest.TestCase):
         finally:
             actions.pyautogui = old_pyautogui
             actions.pyperclip = old_pyperclip
+
+    def test_optional_click_skips_when_coordinate_is_empty(self):
+        fake = FakePyAutoGUI()
+        old_pyautogui = actions.pyautogui
+        try:
+            actions.pyautogui = fake
+
+            result = LocalActions().optional_click({'strategy': 'coordinate_click_twice', 'x': 0, 'y': 0})
+
+            self.assertTrue(result.ok)
+            self.assertIn('skipped', result.message)
+            self.assertEqual(fake.calls, [])
+        finally:
+            actions.pyautogui = old_pyautogui
+
+    def test_optional_click_skips_when_guard_value_is_empty(self):
+        fake = FakePyAutoGUI()
+        old_pyautogui = actions.pyautogui
+        try:
+            actions.pyautogui = fake
+
+            result = LocalActions().optional_click({
+                'strategy': 'coordinate_click_twice',
+                'x': 1057,
+                'y': 610,
+                'guard_value': '',
+            })
+
+            self.assertTrue(result.ok)
+            self.assertIn('guard', result.message)
+            self.assertEqual(fake.calls, [])
+        finally:
+            actions.pyautogui = old_pyautogui
+
+    def test_optional_click_coordinate_clicks_twice_when_configured(self):
+        fake = FakePyAutoGUI()
+        old_pyautogui = actions.pyautogui
+        try:
+            actions.pyautogui = fake
+
+            result = LocalActions().optional_click({'strategy': 'coordinate_click_twice', 'x': 1057, 'y': 610})
+
+            self.assertTrue(result.ok)
+            self.assertEqual(fake.calls, [('click', 1057, 610, 0.12), ('click', 1057, 610, 0.12)])
+        finally:
+            actions.pyautogui = old_pyautogui
 
 
 if __name__ == '__main__':

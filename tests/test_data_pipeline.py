@@ -239,6 +239,41 @@ class DataPipelineTest(unittest.TestCase):
 
         self.assertEqual(rows[0]["report_paths"], ["/tmp/right.pdf"])
 
+    def test_find_file_discovers_optional_package_image_from_label_directory(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            label_dir = root / "labels"
+            label_dir.mkdir()
+            (label_dir / "AC0194-label.png").write_text("label", encoding="utf-8")
+            package = label_dir / "label_update.jpg"
+            package.write_text("package", encoding="utf-8")
+
+            definition = {
+                "data_pipeline": [
+                    {
+                        "step_id": "list_labels",
+                        "type": "list_files",
+                        "params": {"root": str(label_dir), "recursive": True, "output": "label_files"},
+                    },
+                    {
+                        "step_id": "find_package",
+                        "type": "find_file",
+                        "params": {
+                            "files": "label_files",
+                            "mode": "name_contains",
+                            "keyword": "label_update",
+                            "output_field": "package_img_path",
+                        },
+                    },
+                ],
+            }
+
+            rows, trace = run_data_pipeline_with_trace(definition, {})
+
+            self.assertEqual(rows, [{"package_img_path": str(package.resolve())}])
+            self.assertEqual(trace[-1]["output"], "package_img_path")
+            self.assertEqual(trace[-1]["output_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

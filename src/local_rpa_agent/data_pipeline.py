@@ -63,6 +63,16 @@ def run_data_pipeline_with_trace(definition: dict[str, Any], base_row: dict[str,
             output_name = str(params.get("output") or step.get("step_id") or "files")
             context[output_name] = files
             output_value = files
+        elif step_type == "find_file":
+            path = find_file(fileset(context, params.get("files")), params)
+            output_name = str(params.get("output_field") or step.get("step_id") or "file_path")
+            context[output_name] = path
+            output_value = path
+            if last_rows is None:
+                last_rows = [{output_name: path}]
+            else:
+                last_rows = [{**row, output_name: path} for row in last_rows]
+                context[str(params.get("output") or params.get("source") or "rows")] = last_rows
         elif step_type == "match_files":
             rows = match_files(dataset(context, params.get("source")), fileset(context, params.get("files")), params)
             output_name = str(params.get("output") or params.get("source") or "rows")
@@ -94,6 +104,8 @@ def pipeline_input_count(step_type: str, params: dict[str, Any], context: dict[s
     if step_type == "list_files":
         root = Path(str(params.get("root") or "")).expanduser()
         return 1 if root.exists() else 0
+    if step_type == "find_file":
+        return len(fileset(context, params.get("files")))
     if step_type == "match_files":
         return len(dataset(context, params.get("source")))
     if step_type in {"group_rows", "filter_completed", "derive_regex_list", "validate_required_fields", "set_field"}:
@@ -125,6 +137,12 @@ def pipeline_trace_step(
         trace["target"] = str(params.get("target") or "name")
     if step_type == "list_files":
         trace["root"] = str(params.get("root") or "")
+    if step_type == "find_file":
+        trace["files"] = str(params.get("files") or "")
+        trace["match_mode"] = str(params.get("mode") or "name_contains")
+        trace["keyword"] = str(params.get("keyword") or "")
+        trace["pattern"] = str(params.get("pattern") or "")
+        trace["target"] = str(params.get("target") or "name")
     return trace
 
 
@@ -283,6 +301,32 @@ def match_files(rows: list[dict[str, Any]], files: list[dict[str, Any]], params:
                     matched.append(path)
         out.append({**row, output_field: matched})
     return out
+
+
+def find_file(files: list[dict[str, Any]], params: dict[str, Any]) -> str:
+    mode = str(params.get("mode") or "name_contains").strip()
+    keyword = str(params.get("keyword") or "").strip()
+    pattern = str(params.get("pattern") or "").strip()
+    target = str(params.get("target") or "name").strip()
+    case_insensitive = params.get("case_insensitive") is not False
+    for file in files:
+        text = str(file.get(target) if target in file else file.get("name") or "")
+        if single_file_matches(text, mode, keyword, pattern, case_insensitive):
+            return str(file.get("path") or "")
+    return ""
+
+
+def single_file_matches(text: str, mode: str, keyword: str, pattern: str, case_insensitive: bool) -> bool:
+    haystack = text.lower() if case_insensitive else text
+    needle = keyword.lower() if case_insensitive else keyword
+    if mode == "regex":
+        if not pattern:
+            return False
+        flags = re.IGNORECASE if case_insensitive else 0
+        return bool(re.search(pattern, text, flags))
+    if mode == "name_equals":
+        return bool(needle and haystack == needle)
+    return bool(needle and needle in haystack)
 
 
 def file_matches(file: dict[str, Any], values: list[str], mode: str, params: dict[str, Any] | None = None) -> bool:
