@@ -249,7 +249,12 @@ class DataPipelineTest(unittest.TestCase):
                         "source": "rows",
                         "source_field": "sku_list",
                         "target_field": "report_sku_candidates",
-                        "formats": ["compact_full", "dash_full", "compact_core", "dash_core"],
+                        "candidate_templates": [
+                            "{prefix}{number}-{suffix}",
+                            "{prefix}-{number}-{suffix}",
+                            "{prefix}{number}",
+                            "{prefix}-{number}",
+                        ],
                         "output": "rows",
                     },
                 },

@@ -277,21 +277,24 @@ def derive_sku_candidates(rows: list[dict[str, Any]], params: dict[str, Any]) ->
     target_field = str(params.get("target_field") or "").strip()
     if not source_field or not target_field:
         raise ValueError("derive_sku_candidates requires source_field and target_field")
+    templates = [str(item) for item in normalize_values(params.get("candidate_templates")) if str(item).strip()]
     formats = [str(item) for item in normalize_values(params.get("formats")) if str(item).strip()]
-    if not formats:
-        formats = ["compact_full", "dash_full"]
+    if not templates and formats:
+        templates = legacy_sku_candidate_templates(formats)
+    if not templates:
+        templates = ["{prefix}{number}-{suffix}", "{prefix}-{number}-{suffix}"]
     out: list[dict[str, Any]] = []
     for row in rows:
         candidates: list[str] = []
         for raw in normalize_values(row.get(source_field)):
-            for value in sku_candidates(str(raw), formats):
+            for value in sku_candidates(str(raw), templates):
                 if value and value not in candidates:
                     candidates.append(value)
         out.append({**row, target_field: candidates})
     return out
 
 
-def sku_candidates(value: str, formats: list[str]) -> list[str]:
+def sku_candidates(value: str, templates: list[str]) -> list[str]:
     full = str(value or "").strip().upper()
     if not full:
         return []
@@ -300,25 +303,38 @@ def sku_candidates(value: str, formats: list[str]) -> list[str]:
         return [full]
     prefix, number, suffix = match.groups()
     suffix = suffix.lstrip("-")
-    compact_suffix = f"-{suffix}" if suffix else ""
-    dash_suffix = f"-{suffix}" if suffix else ""
-    compact_core = f"{prefix}{number}"
-    dash_core = f"{prefix}-{number}"
-    compact_full = f"{compact_core}{compact_suffix}"
-    dash_full = f"{dash_core}{dash_suffix}"
-    mapping = {
-        "raw": full,
-        "compact_full": compact_full,
-        "dash_full": dash_full,
-        "compact_core": compact_core,
-        "dash_core": dash_core,
-    }
     out: list[str] = []
-    for fmt in formats:
-        item = mapping.get(fmt)
+    for template in templates:
+        item = render_sku_template(template, prefix, number, suffix)
         if item and item not in out:
             out.append(item)
     return out
+
+
+def render_sku_template(template: str, prefix: str, number: str, suffix: str) -> str:
+    raw = f"{prefix}{number}{('-' + suffix) if suffix else ''}"
+    value = template
+    for key, item in {
+        "raw": raw,
+        "prefix": prefix,
+        "number": number,
+        "suffix": suffix,
+        "dash_suffix": f"-{suffix}" if suffix else "",
+    }.items():
+        value = value.replace("{" + key + "}", item)
+    value = re.sub(r"-+", "-", value.strip().upper())
+    return value.strip("-")
+
+
+def legacy_sku_candidate_templates(formats: list[str]) -> list[str]:
+    mapping = {
+        "raw": "{raw}",
+        "compact_full": "{prefix}{number}-{suffix}",
+        "dash_full": "{prefix}-{number}-{suffix}",
+        "compact_core": "{prefix}{number}",
+        "dash_core": "{prefix}-{number}",
+    }
+    return [mapping[item] for item in formats if item in mapping]
 
 
 def list_files(params: dict[str, Any]) -> list[dict[str, Any]]:
