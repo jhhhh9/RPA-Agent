@@ -6,9 +6,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
+from .capabilities import LOCAL_CAPABILITIES, capability_label, capability_labels, missing_capabilities
 from .client import SaaSClient
 from .config import AgentConfig
-from .runner import execute_run
+from .runner import execute_run, preview_data_pipeline
 from .storage import AgentState, clear_state, load_state, save_state
 
 HEARTBEAT_INTERVAL_SECONDS = 20
@@ -98,7 +99,7 @@ class AgentApp:
         try:
             self.cfg = AgentConfig.load(base_url=self.base_url.get().strip())
             self.client = SaaSClient(self.cfg.base_url)
-            data = self.client.bind(code, self.cfg.device_name, self.cfg.os_type, self.cfg.version, self.cfg.device_fingerprint)
+            data = self.client.bind(code, self.cfg.device_name, self.cfg.os_type, self.cfg.version, self.cfg.device_fingerprint, LOCAL_CAPABILITIES)
             agent = data['agent']
             token = data['token']
             self.state = AgentState(agent_id=agent['id'], tenant_id=agent['tenant_id'], user_id=agent['user_id'], token=token)
@@ -170,6 +171,8 @@ class AgentApp:
         if isinstance(definition, str):
             definition = json.loads(definition)
         row = 0
+        row = self.add_usage_guide(row, definition)
+        row = self.add_capability_notice(row, definition)
         row = self.add_schema_section(row, '运行输入', definition.get('input_schema') or [], 'input')
         row = self.add_schema_section(row, '按钮/截图资产', definition.get('assets') or [], 'input')
         row = self.add_schema_section(row, '运行参数', definition.get('runtime_schema') or [], 'runtime')
@@ -177,12 +180,56 @@ class AgentApp:
         ttk.Entry(self.form_body, textvariable=self.output_dir, width=72).grid(row=row, column=1, sticky='ew', padx=10, pady=6)
         ttk.Button(self.form_body, text='选择目录', command=lambda: self.pick_directory(self.output_dir)).grid(row=row, column=2, padx=10, pady=6)
         row += 1
+        preview_button = ttk.Button(self.form_body, text='预检数据管道', command=self.preview_pipeline)
+        preview_button.grid(row=row, column=0, sticky='w', padx=10, pady=12)
         self.run_button = ttk.Button(self.form_body, text='创建并运行', command=self.start_run)
         self.run_button.grid(row=row, column=1, sticky='w', padx=10, pady=12)
         self.stop_button = ttk.Button(self.form_body, text='停止当前任务', command=self.request_stop_current, state='disabled')
         self.stop_button.grid(row=row, column=2, sticky='w', padx=10, pady=12)
         self.form_body.columnconfigure(1, weight=1)
         self._refresh_form_scrollregion()
+
+    def add_usage_guide(self, row: int, definition: dict[str, Any]) -> int:
+        guide = definition.get('usage_guide') or {}
+        if not isinstance(guide, dict):
+            return row
+        lines: list[str] = []
+        summary = str(guide.get('summary') or '').strip()
+        if summary:
+            lines.append(summary)
+        for title, key in [('输入要求', 'input_requirements'), ('命名规则', 'file_naming_rules'), ('运行注意', 'run_notes')]:
+            values = [str(item).strip() for item in guide.get(key) or [] if str(item).strip()]
+            if values:
+                lines.append(f"{title}: " + '；'.join(values))
+        if not lines:
+            return row
+        ttk.Label(self.form_body, text='工作流说明', font=('TkDefaultFont', 10, 'bold')).grid(row=row, column=0, columnspan=3, sticky='w', padx=10, pady=(10, 4))
+        row += 1
+        text = tk.Text(self.form_body, height=min(8, max(3, len(lines) + 1)), wrap='word')
+        text.insert('1.0', '\n'.join(lines))
+        text.configure(state='disabled')
+        text.grid(row=row, column=0, columnspan=3, sticky='ew', padx=10, pady=4)
+        row += 1
+        return row
+
+    def add_capability_notice(self, row: int, definition: dict[str, Any]) -> int:
+        required = definition.get('required_capabilities') or []
+        missing = missing_capabilities(required, LOCAL_CAPABILITIES)
+        if required:
+            ttk.Label(
+                self.form_body,
+                text='Agent能力: ' + '、'.join(capability_labels(required)),
+                foreground='red' if missing else 'gray',
+            ).grid(row=row, column=0, columnspan=3, sticky='w', padx=10, pady=4)
+            row += 1
+        if missing:
+            ttk.Label(
+                self.form_body,
+                text='当前本地 Agent 缺少能力：' + '、'.join(capability_label(item) for item in missing),
+                foreground='red',
+            ).grid(row=row, column=0, columnspan=3, sticky='w', padx=10, pady=4)
+            row += 1
+        return row
 
     def add_schema_section(self, row: int, title: str, specs: list[dict[str, Any]], bucket: str) -> int:
         if not specs:
@@ -231,17 +278,11 @@ class AgentApp:
             messagebox.showwarning('请选择工作流', '请先选择一个可用工作流。')
             return
         try:
-            input_files: dict[str, Any] = {}
-            runtime_params: dict[str, Any] = {}
-            for key, (bucket, spec, var) in self.dynamic_fields.items():
-                value = var.get()
-                if spec.get('required') and (value is None or str(value).strip() == ''):
-                    raise ValueError(f"请填写：{spec.get('label') or key}")
-                if spec.get('type') == 'number' and value != '':
-                    value = float(value)
-                target = runtime_params if bucket == 'runtime' else input_files
-                target[key] = value
-            output_dir = self.output_dir.get().strip()
+            input_files, runtime_params, output_dir = self.collect_run_values(require_all=True)
+            definition = workflow_definition(workflow)
+            missing = missing_capabilities(definition.get('required_capabilities') or [], LOCAL_CAPABILITIES)
+            if missing:
+                raise ValueError('当前本地 Agent 缺少工作流能力：' + '、'.join(capability_label(item) for item in missing))
             self.stop_requested.clear()
             if self.run_button:
                 self.run_button.configure(state='disabled')
@@ -251,6 +292,40 @@ class AgentApp:
             thread.start()
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror('参数错误', str(exc))
+
+    def collect_run_values(self, require_all: bool = True) -> tuple[dict[str, Any], dict[str, Any], str]:
+        input_files: dict[str, Any] = {}
+        runtime_params: dict[str, Any] = {}
+        for key, (bucket, spec, var) in self.dynamic_fields.items():
+            value = var.get()
+            if require_all and spec.get('required') and (value is None or str(value).strip() == ''):
+                raise ValueError(f"请填写：{spec.get('label') or key}")
+            if spec.get('type') == 'number' and value != '':
+                value = float(value)
+            target = runtime_params if bucket == 'runtime' else input_files
+            target[key] = value
+        return input_files, runtime_params, self.output_dir.get().strip()
+
+    def preview_pipeline(self) -> None:
+        workflow = self.workflow_by_label.get(self.workflow_label.get())
+        if not workflow:
+            messagebox.showwarning('请选择工作流', '请先选择一个可用工作流。')
+            return
+        try:
+            input_files, runtime_params, output_dir = self.collect_run_values(require_all=True)
+            base_row: dict[str, Any] = {**input_files, **runtime_params}
+            base_row['__input'] = input_files
+            base_row['__runtime'] = runtime_params
+            if output_dir:
+                base_row['output_dir'] = output_dir
+            result = preview_data_pipeline(workflow_definition(workflow), base_row)
+            if not result.get('ok'):
+                raise ValueError(str(result.get('error') or '预检失败'))
+            self.log(f"预检通过：数据管道生成 {result.get('total', 0)} 组执行数据")
+            for index, item in enumerate(result.get('sample') or [], start=1):
+                self.log(f"预检样例 {index}: {json.dumps(item, ensure_ascii=False)[:800]}")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror('预检失败', str(exc))
 
     def request_stop_current(self) -> None:
         self.stop_requested.set()
@@ -290,7 +365,7 @@ class AgentApp:
             if state:
                 try:
                     self.client = SaaSClient(self.base_url.get().strip())
-                    self.client.heartbeat(state.token, self.cfg.version)
+                    self.client.heartbeat(state.token, self.cfg.version, LOCAL_CAPABILITIES)
                     self.root.after(0, lambda: self.status.set(self.bound_status()))
                 except Exception as exc:  # noqa: BLE001
                     self.root.after(0, lambda e=exc: self.status.set(f'{self.bound_status()} / 心跳失败：{e}'))
@@ -318,7 +393,7 @@ class AgentApp:
     def bound_status(self) -> str:
         if not self.state:
             return '未绑定'
-        return f'已绑定设备：{self.cfg.device_name} / Agent {self.state.agent_id}'
+        return f'已绑定设备：{self.cfg.device_name} / Agent {self.state.agent_id} / 版本 {self.cfg.version}'
 
     def log(self, message: str) -> None:
         self.root.after(0, lambda: self._append_log(message))
@@ -331,6 +406,16 @@ class AgentApp:
         self.stop_heartbeat_loop()
         self.stop_requested.set()
         self.root.destroy()
+
+
+def workflow_definition(workflow: dict[str, Any]) -> dict[str, Any]:
+    definition = workflow.get('definition') or {}
+    if isinstance(definition, str):
+        try:
+            definition = json.loads(definition)
+        except json.JSONDecodeError:
+            definition = {}
+    return definition if isinstance(definition, dict) else {}
 
 
 def main() -> None:

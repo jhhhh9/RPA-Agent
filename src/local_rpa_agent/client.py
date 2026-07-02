@@ -10,7 +10,15 @@ class SaaSClient:
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
 
-    def bind(self, code: str, device_name: str, os_type: str, version: str, device_fingerprint: str) -> dict[str, Any]:
+    def bind(
+        self,
+        code: str,
+        device_name: str,
+        os_type: str,
+        version: str,
+        device_fingerprint: str,
+        capabilities: list[str] | None = None,
+    ) -> dict[str, Any]:
         return self._request(
             'POST',
             '/api/automation/agents/bind',
@@ -20,11 +28,17 @@ class SaaSClient:
                 'os_type': os_type,
                 'agent_version': version,
                 'device_fingerprint': device_fingerprint,
+                'capabilities': capabilities or [],
             },
         )
 
-    def heartbeat(self, token: str, version: str) -> dict[str, Any]:
-        return self._request('POST', '/api/automation/agents/heartbeat', token=token, json={'agent_version': version})
+    def heartbeat(self, token: str, version: str, capabilities: list[str] | None = None) -> dict[str, Any]:
+        return self._request(
+            'POST',
+            '/api/automation/agents/heartbeat',
+            token=token,
+            json={'agent_version': version, 'capabilities': capabilities or []},
+        )
 
     def revoke(self, token: str) -> dict[str, Any]:
         return self._request('POST', '/api/automation/agents/revoke', token=token)

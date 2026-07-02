@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
-from .client import SaaSClient
+from .capabilities import LOCAL_CAPABILITIES, capability_labels, missing_capabilities
 from .data_pipeline import run_data_pipeline
 from .workflow import WorkflowExecutor
+
+if TYPE_CHECKING:
+    from .client import SaaSClient
 
 LogFn = Callable[[str], None]
 StopFn = Callable[[], bool]
 
 
-def execute_run(client: SaaSClient, token: str, run: dict[str, Any], log: LogFn | None = None, should_stop: StopFn | None = None) -> None:
+def execute_run(client: "SaaSClient", token: str, run: dict[str, Any], log: LogFn | None = None, should_stop: StopFn | None = None) -> None:
     def emit(message: str) -> None:
         if log:
             log(message)
@@ -28,6 +31,12 @@ def execute_run(client: SaaSClient, token: str, run: dict[str, Any], log: LogFn 
         definition = run.get('workflow_snapshot') or {}
         if isinstance(definition, str):
             definition = json.loads(definition)
+        missing = missing_capabilities(definition.get('required_capabilities') or [], LOCAL_CAPABILITIES)
+        if missing:
+            message = '本地 Agent 缺少工作流能力：' + '、'.join(capability_labels(missing))
+            client.update_run_status(token, run_id, 'failed', failed_rows=max(1, failed), error_message=message)
+            emit(message)
+            return
         base_row = runtime_row(run)
         rows = execution_rows(definition, base_row)
         if not rows:
@@ -61,7 +70,7 @@ def execute_run(client: SaaSClient, token: str, run: dict[str, Any], log: LogFn 
         emit(f'任务失败：{exc}')
 
 
-def make_stop_checker(client: SaaSClient, token: str, run_id: str, local_stop: StopFn | None = None) -> StopFn:
+def make_stop_checker(client: "SaaSClient", token: str, run_id: str, local_stop: StopFn | None = None) -> StopFn:
     last_check = 0.0
     server_stopping = False
 
@@ -114,3 +123,12 @@ def execution_rows(definition: dict[str, Any], base_row: dict[str, Any]) -> list
         row['__runtime'] = base_row.get('__runtime', {})
         rows.append(row)
     return rows
+
+
+def preview_data_pipeline(definition: dict[str, Any], base_row: dict[str, Any], sample_limit: int = 5) -> dict[str, Any]:
+    """Run the local data pipeline only, without creating a SaaS run or touching UI automation."""
+    missing = missing_capabilities(definition.get('required_capabilities') or [], LOCAL_CAPABILITIES)
+    if missing:
+        return {"ok": False, "error": "本地 Agent 缺少工作流能力：" + "、".join(capability_labels(missing)), "total": 0, "sample": []}
+    rows = execution_rows(definition, base_row)
+    return {"ok": True, "total": len(rows), "sample": rows[:max(0, sample_limit)]}

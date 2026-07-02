@@ -17,7 +17,9 @@
 - 根据工作流 schema 动态渲染输入、参数、输出和按钮截图资产。
 - 回写任务 `running/completed/failed` 状态。
 - 对 `focus_window`、`click_image`、`click_coordinate`、`type_text`、`select_option`、`upload_file`、`scroll` 等节点执行本地动作。
-- `auto_cert_prepare_spu` 预处理器可读取任务 Excel，按 SPU 分组，匹配标签图目录、外包装图和测试报告目录，然后逐组执行后续节点。
+- 通用 `data_pipeline` 能读取任务表、按字段分组、匹配本地目录文件、校验必填资源，并把结果作为 `row` 数据流传给后续动作节点。
+- Agent 会在绑定和心跳时上报 `required_capabilities` 对应的能力，SaaS 和本地执行前都会做能力匹配校验。
+- GUI 会展示工作流使用说明，并支持“预检数据管道”，先确认输入文件、资源目录和匹配结果，再创建正式任务。
 
 
 ## 面向普通用户的交付方式
@@ -74,6 +76,6 @@ Windows PowerShell 可把 `source .venv/bin/activate` 换成：
 - `upload_file`：在系统文件选择框中填入本地文件路径，支持多文件。
 - `select_option`：操作下拉框。
 - `scroll`：滚动页面。
-- `auto_cert_prepare_spu`：承接 autoCert.py 的 Excel 分组和本地资源匹配逻辑。
+- `data_pipeline`：通用本地数据准备引擎，支持读取表格、分组、列出目录文件、匹配文件、校验必填字段和设置字段。
 
-这些能力需要本机 GUI 权限。后续若升级成 Electron/Wails 桌面应用，可复用现有 SaaS 协议和 workflow schema，只替换本地 UI 壳。
+这些能力需要本机 GUI 权限。后续若升级成 Electron/Wails 桌面应用，可复用现有 SaaS 协议、workflow schema、能力上报和 data_pipeline，只替换本地 UI 壳。
