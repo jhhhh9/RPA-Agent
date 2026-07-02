@@ -106,6 +106,92 @@ class DataPipelineTest(unittest.TestCase):
             self.assertEqual(len(row["report_paths"]), 2)
             self.assertIn("SPU002", (output_dir / "miss_resource.txt").read_text(encoding="utf-8"))
 
+    def test_dash_sku_core_is_normalized_before_label_matching_and_both_files_required(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            label_dir = root / "labels"
+            report_dir = root / "reports"
+            output_dir = root / "out"
+            label_dir.mkdir()
+            report_dir.mkdir()
+            output_dir.mkdir()
+            (label_dir / "R0059-G.jpg").write_text("label", encoding="utf-8")
+            (label_dir / "R0059-S.jpg").write_text("label", encoding="utf-8")
+            (report_dir / "铅镉镍R-0059-G SL-0015.pdf").write_text("report", encoding="utf-8")
+            (report_dir / "铅镉镍R-0059-S SL-0007.pdf").write_text("report", encoding="utf-8")
+
+            definition = {
+                "data_pipeline": [
+                    {
+                        "step_id": "extract_core_sku",
+                        "type": "derive_regex_list",
+                        "params": {
+                            "source": "run_rows",
+                            "source_field": "sku_list",
+                            "target_field": "core_sku_list",
+                            "pattern": "(AB|AC|ER|R)-?\\d+",
+                            "normalize_before_match": True,
+                            "normalize_core": True,
+                            "output": "run_rows",
+                        },
+                    },
+                    {"step_id": "list_labels", "type": "list_files", "params": {"root": str(label_dir), "recursive": True, "output": "label_files"}},
+                    {"step_id": "list_reports", "type": "list_files", "params": {"root": str(report_dir), "recursive": False, "output": "report_files"}},
+                    {
+                        "step_id": "match_labels",
+                        "type": "match_files",
+                        "params": {
+                            "source": "run_rows",
+                            "files": "label_files",
+                            "values_field": "core_sku_list",
+                            "output_field": "label_paths",
+                            "mode": "core_stem_equals_any",
+                            "output": "run_rows",
+                        },
+                    },
+                    {
+                        "step_id": "match_reports",
+                        "type": "match_files",
+                        "params": {
+                            "source": "run_rows",
+                            "files": "report_files",
+                            "values_field": "sku_list",
+                            "output_field": "report_paths",
+                            "mode": "regex_any",
+                            "pattern": "(^|[^A-Za-z0-9]){{value}}([^A-Za-z0-9]|$)",
+                            "target": "name",
+                            "output": "run_rows",
+                        },
+                    },
+                    {
+                        "step_id": "validate_files",
+                        "type": "validate_required_fields",
+                        "params": {
+                            "source": "run_rows",
+                            "required_fields": ["label_paths", "report_paths"],
+                            "log_path": str(output_dir / "miss_resource.txt"),
+                            "output": "run_rows",
+                        },
+                    },
+                ]
+            }
+            base_row = {
+                "run_rows": [
+                    {"SPU ID": "SPU001", "sku_list": ["R-0059-G", "R-0059-S"]},
+                    {"SPU ID": "SPU002", "sku_list": ["R-9999-G"]},
+                ]
+            }
+
+            rows = run_data_pipeline(definition, base_row)
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["core_sku_list"], ["R0059"])
+            self.assertEqual(len(rows[0]["label_paths"]), 2)
+            self.assertEqual(len(rows[0]["report_paths"]), 2)
+            miss = (output_dir / "miss_resource.txt").read_text(encoding="utf-8")
+            self.assertIn("SPU:SPU002", miss)
+            self.assertIn("缺失必填:label_paths,report_paths", miss)
+
     def test_trace_records_each_pipeline_step_count_and_sample(self):
         definition = {
             "data_pipeline": [
@@ -121,6 +207,37 @@ class DataPipelineTest(unittest.TestCase):
         self.assertEqual(trace[0]["input_count"], 1)
         self.assertEqual(trace[0]["output_count"], 1)
         self.assertEqual(trace[0]["sample"][0]["name"], "demo")
+
+    def test_regex_file_match_respects_sku_boundaries(self):
+        definition = {
+            "data_pipeline": [
+                {
+                    "step_id": "match_reports",
+                    "type": "match_files",
+                    "params": {
+                        "source": "rows",
+                        "files": "files",
+                        "values_field": "sku_list",
+                        "output_field": "report_paths",
+                        "mode": "regex_any",
+                        "pattern": "(^|[^A-Za-z0-9]){{value}}([^A-Za-z0-9]|$)",
+                        "target": "name",
+                        "output": "rows",
+                    },
+                },
+            ]
+        }
+        base_row = {
+            "rows": [{"SPU ID": "SPU001", "sku_list": ["R0262"]}],
+            "files": [
+                {"name": "ER0262 report.pdf", "path": "/tmp/wrong.pdf"},
+                {"name": "R0262 report.pdf", "path": "/tmp/right.pdf"},
+            ],
+        }
+
+        rows = run_data_pipeline(definition, base_row)
+
+        self.assertEqual(rows[0]["report_paths"], ["/tmp/right.pdf"])
 
 
 if __name__ == "__main__":

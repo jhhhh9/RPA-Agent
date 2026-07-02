@@ -170,16 +170,27 @@ def evaluate_condition(expression: str, row: dict[str, Any]) -> bool:
     expression = expression.strip()
     if not expression:
         return False
+    or_parts = split_condition(expression, "||")
+    if len(or_parts) > 1:
+        return any(evaluate_condition(part, row) for part in or_parts)
+    and_parts = split_condition(expression, "&&")
+    if len(and_parts) > 1:
+        return all(evaluate_condition(part, row) for part in and_parts)
+    if expression.startswith("not_empty(") and expression.endswith(")"):
+        return not is_condition_empty(resolve_condition_value(expression[10:-1].strip(), row))
+    if expression.startswith("is_empty(") and expression.endswith(")"):
+        return is_condition_empty(resolve_condition_value(expression[9:-1].strip(), row))
     if '==' in expression:
-        left, right = [part.strip().strip("'\"") for part in expression.split('==', 1)]
-        return str(resolve_condition_value(left, row)) == right
+        left, right = [part.strip() for part in expression.split('==', 1)]
+        return compare_condition(resolve_condition_value(left, row), right, equals=True)
     if '!=' in expression:
-        left, right = [part.strip().strip("'\"") for part in expression.split('!=', 1)]
-        return str(resolve_condition_value(left, row)) != right
+        left, right = [part.strip() for part in expression.split('!=', 1)]
+        return compare_condition(resolve_condition_value(left, row), right, equals=False)
     return bool(resolve_condition_value(expression, row))
 
 
 def resolve_condition_value(name: str, row: dict[str, Any]) -> Any:
+    name = name.strip().strip("'\"")
     if name.startswith('row.'):
         return row.get(name[4:], '')
     if name.startswith('input.') and isinstance(row.get('__input'), dict):
@@ -187,3 +198,43 @@ def resolve_condition_value(name: str, row: dict[str, Any]) -> Any:
     if name.startswith('runtime.') and isinstance(row.get('__runtime'), dict):
         return row['__runtime'].get(name[8:], '')
     return row.get(name, '')
+
+
+def split_condition(expression: str, operator: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    index = 0
+    while index < len(expression):
+        char = expression[index]
+        if char == '(':
+            depth += 1
+        elif char == ')':
+            depth = max(0, depth - 1)
+        elif depth == 0 and expression.startswith(operator, index):
+            parts.append(expression[start:index].strip())
+            index += len(operator)
+            start = index
+            continue
+        index += 1
+    if parts:
+        parts.append(expression[start:].strip())
+        return [part for part in parts if part]
+    return [expression]
+
+
+def compare_condition(value: Any, raw_expected: str, equals: bool) -> bool:
+    expected = raw_expected.strip().strip("'\"")
+    if expected.lower() in {"null", "none", ""}:
+        result = is_condition_empty(value)
+    else:
+        result = str(value) == expected
+    return result if equals else not result
+
+
+def is_condition_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return str(value).strip() == ""

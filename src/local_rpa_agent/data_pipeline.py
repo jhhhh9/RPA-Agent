@@ -121,6 +121,8 @@ def pipeline_trace_step(
         trace["match_mode"] = str(params.get("mode") or "name_contains_any")
         trace["values_field"] = str(params.get("values_field") or "")
         trace["output_field"] = str(params.get("output_field") or "")
+        trace["pattern"] = str(params.get("pattern") or "")
+        trace["target"] = str(params.get("target") or "name")
     if step_type == "list_files":
         trace["root"] = str(params.get("root") or "")
     return trace
@@ -233,7 +235,10 @@ def derive_regex_list(rows: list[dict[str, Any]], params: dict[str, Any]) -> lis
     for row in rows:
         values: list[str] = []
         for raw in normalize_values(row.get(source_field)):
-            for match in regex.finditer(str(raw)):
+            text = str(raw)
+            if params.get("normalize_before_match"):
+                text = text.upper().replace("-", "")
+            for match in regex.finditer(text):
                 value = match.group(0).upper()
                 if params.get("normalize_core"):
                     value = value.replace("-", "")
@@ -272,7 +277,7 @@ def match_files(rows: list[dict[str, Any]], files: list[dict[str, Any]], params:
         values = [str(value).strip() for value in normalize_values(row.get(values_field)) if str(value).strip()]
         matched: list[str] = []
         for file in files:
-            if file_matches(file, values, mode):
+            if file_matches(file, values, mode, params):
                 path = str(file.get("path") or "")
                 if path and path not in matched:
                     matched.append(path)
@@ -280,9 +285,10 @@ def match_files(rows: list[dict[str, Any]], files: list[dict[str, Any]], params:
     return out
 
 
-def file_matches(file: dict[str, Any], values: list[str], mode: str) -> bool:
+def file_matches(file: dict[str, Any], values: list[str], mode: str, params: dict[str, Any] | None = None) -> bool:
     if not values:
         return False
+    params = params or {}
     name = str(file.get("name") or "")
     stem = str(file.get("stem") or "")
     if mode == "core_stem_equals_any":
@@ -290,7 +296,21 @@ def file_matches(file: dict[str, Any], values: list[str], mode: str) -> bool:
         return bool(core and core in {extract_core(value) or value.upper() for value in values})
     if mode == "exact_token_any":
         return any(exact_token_match(name, value) for value in values)
+    if mode == "regex_any":
+        return any(regex_file_match(file, value, params) for value in values)
     return any(value.lower() in name.lower() for value in values)
+
+
+def regex_file_match(file: dict[str, Any], value: str, params: dict[str, Any]) -> bool:
+    target = str(params.get("target") or "name").strip()
+    text = str(file.get(target) if target in file else file.get("name") or "")
+    pattern = str(params.get("pattern") or "").strip()
+    if not pattern:
+        return exact_token_match(text, value)
+    escaped = re.escape(str(value))
+    pattern = pattern.replace("{{value}}", escaped)
+    flags = 0 if params.get("case_insensitive") is False else re.IGNORECASE
+    return bool(re.search(pattern, text, flags))
 
 
 def validate_required_fields(rows: list[dict[str, Any]], params: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:

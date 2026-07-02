@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from local_rpa_agent.workflow import WorkflowExecutor, render_template
+from local_rpa_agent.workflow import WorkflowExecutor, evaluate_condition, render_template
 
 
 class WorkflowExecutorTest(unittest.TestCase):
@@ -37,6 +37,32 @@ class WorkflowExecutorTest(unittest.TestCase):
             self.assertEqual(result.success_rows, 1)
             self.assertEqual(result.failed_rows, 0)
             self.assertEqual(log_path.read_text(encoding="utf-8").splitlines(), ["AC001-Golden", "AC001-Silver"])
+
+    def test_condition_supports_not_empty_and_boolean_operators_for_list_fields(self):
+        row = {"label_paths": ["label.jpg"], "report_paths": ["report.pdf"], "package_img_path": ""}
+
+        self.assertTrue(evaluate_condition("not_empty(row.label_paths) && not_empty(row.report_paths)", row))
+        self.assertTrue(evaluate_condition("is_empty(row.package_img_path) || not_empty(row.label_paths)", row))
+        self.assertFalse(evaluate_condition("not_empty(row.package_img_path)", row))
+
+    def test_executor_routes_by_not_empty_condition(self):
+        definition = {
+            "entry_node": "entry",
+            "nodes": [
+                {"node_id": "entry", "type": "log", "params": {"message": "entry"}},
+                {"node_id": "upload", "type": "log", "params": {"message": "upload"}},
+                {"node_id": "skip", "type": "log", "params": {"message": "skip"}},
+            ],
+            "edges": [
+                {"from": "entry", "to": "upload", "condition": "not_empty(row.label_paths) && not_empty(row.report_paths)"},
+                {"from": "entry", "to": "skip"},
+            ],
+        }
+
+        result = WorkflowExecutor().execute(definition, row={"label_paths": ["label.jpg"], "report_paths": ["report.pdf"]})
+
+        self.assertEqual(result.success_rows, 1)
+        self.assertEqual([item.node_id for item in result.logs], ["entry", "upload"])
 
 
 if __name__ == "__main__":

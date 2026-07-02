@@ -51,6 +51,22 @@ class ActionTest(unittest.TestCase):
             actions.pyautogui = old_pyautogui
             actions.pyperclip = old_pyperclip
 
+    def test_upload_file_accepts_rendered_list_paths(self):
+        fake = FakePyAutoGUI()
+        old_pyautogui = actions.pyautogui
+        old_pyperclip = actions.pyperclip
+        try:
+            actions.pyautogui = fake
+            actions.pyperclip = None
+
+            result = LocalActions().upload_file({'allow_missing': True}, ['C:\\tmp\\a.jpg', 'C:\\tmp\\b.jpg'])
+
+            self.assertTrue(result.ok)
+            self.assertEqual(fake.calls, [('write', '"C:\\tmp\\a.jpg" "C:\\tmp\\b.jpg"'), ('press', 'enter')])
+        finally:
+            actions.pyautogui = old_pyautogui
+            actions.pyperclip = old_pyperclip
+
 
 if __name__ == '__main__':
     unittest.main()
