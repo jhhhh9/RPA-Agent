@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from .errors import friendly_error_message
+
 
 class SaaSClient:
     def __init__(self, base_url: str, timeout: float = 20.0) -> None:
@@ -99,7 +101,10 @@ class SaaSClient:
         headers = kwargs.pop('headers', {})
         if token:
             headers['Authorization'] = f'Bearer {token}'
-        with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
-            response = client.request(method, path, headers=headers, **kwargs)
-            response.raise_for_status()
-            return response.json()
+        try:
+            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
+                response = client.request(method, path, headers=headers, **kwargs)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(friendly_error_message(exc)) from exc

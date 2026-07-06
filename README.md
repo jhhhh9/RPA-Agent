@@ -19,7 +19,12 @@
 - 对 `focus_window`、`click_image`、`click_coordinate`、`type_text`、`select_option`、`upload_file`、`scroll` 等节点执行本地动作。
 - 通用 `data_pipeline` 能读取任务表、按字段分组、匹配本地目录文件、校验必填资源，并把结果作为 `row` 数据流传给后续动作节点。
 - Agent 会在绑定和心跳时上报 `required_capabilities` 对应的能力，SaaS 和本地执行前都会做能力匹配校验。
-- GUI 会展示工作流使用说明，并支持“预检数据管道”，先确认输入文件、资源目录和匹配结果，再创建正式任务。
+- GUI 左侧展示运行表单，右侧分层展示工作流说明、输入要求、命名规则、按钮截图要求和运行注意事项。
+- GUI 支持“预检数据管道”，先确认输入文件、资源目录、按钮截图目录和匹配结果，再创建正式任务。
+- 坐标类运行参数支持“3 秒取点”，用户把鼠标移动到目标位置后自动写入 X/Y 坐标。
+- 参数模板保存在本机配置目录，只保存本机路径、运行参数和输出目录，不上传云端。
+- SaaS 地址默认只读，普通用户只需要填写绑定码；需要切换环境时通过“高级修改地址”显式解锁。
+- 网络错误会转换成用户可读提示，例如 SaaS 未启动、绑定失效、权限不足、服务异常等。
 
 
 ## 面向普通用户的交付方式
@@ -31,7 +36,7 @@
 3. 超级管理员在 SaaS 的“模块管理 -> automation 配置 -> 平台自动化配置”里发布 Agent 版本，填写版本号、平台和 GitHub Release 下载地址。
 4. 用户在 SaaS 的“本地 RPA 自动化”模块点击“下载本地 Agent”，下载安装即可。
 
-当前项目已经具备面向普通用户的基础 GUI：绑定设备、刷新可用工作流，并根据 SaaS workflow 的 `input_schema/runtime_schema/output_schema/assets` 动态生成运行表单。绑定后本机不允许重复填写绑定码；如需更换绑定，可先清除本机 token。动作适配层已接入基础 pyautogui/OpenCV 能力，用于图片点击、坐标点击、输入、上传文件和滚动。
+当前项目已经具备面向普通用户的基础 GUI：绑定设备、刷新可用工作流，并根据 SaaS workflow 的 `input_schema/runtime_schema/output_schema/assets/usage_guide` 动态生成运行表单和说明面板。绑定后本机不允许重复填写绑定码；如需更换绑定，可先清除本机 token。动作适配层已接入基础 pyautogui/OpenCV 能力，用于图片点击、坐标点击、输入、上传文件和滚动。
 
 ## 快速开始
 
@@ -49,6 +54,14 @@ local-rpa-agent bind ABCD1234 --base-url http://127.0.0.1:8080
 local-rpa-agent once
 local-rpa-agent service --interval 5
 ```
+
+GUI 使用建议：
+
+1. 在 SaaS 里生成绑定码，打开 Agent 后输入绑定码完成绑定。
+2. 选择工作流后，先阅读右侧说明面板，按要求准备任务文件、资源目录和按钮截图目录。
+3. 在“本地参数模板”里可保存常用路径和参数，下次选择同一工作流后直接应用。
+4. 坐标参数可点击“3秒取点”，确认后把鼠标移动到目标位置，Agent 会自动填入坐标。
+5. 点击“预检数据管道”，确认文件匹配和资源检查通过后，再点击“创建并运行”。
 
 Windows PowerShell 可把 `source .venv/bin/activate` 换成：
 
